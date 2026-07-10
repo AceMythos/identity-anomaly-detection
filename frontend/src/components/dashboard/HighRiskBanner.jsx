@@ -1,34 +1,35 @@
 import { motion } from 'framer-motion'
 import { AlertTriangle, ArrowRight } from 'lucide-react'
-import GlassCard from '../glass/GlassCard'
 
 export default function HighRiskBanner({ onInvestigate }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: -10 }}
+      initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-      className="glass-card-sm p-4 mb-4"
+      className="glass-elevated p-4 mb-4 glow-red"
       style={{
         borderLeft: '3px solid #ef4444',
-        boxShadow: '0 0 30px rgba(239,68,68,0.1), 0 12px 30px rgba(0,0,0,0.3)',
       }}
     >
       <div className="flex items-center gap-4">
-        <div className="p-2.5 rounded-xl bg-red-500/10">
+        <div className="p-2.5 rounded-xl bg-red-500/10 flex-shrink-0">
           <AlertTriangle size={20} className="text-red-400" />
         </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className="badge badge-critical">CRITICAL</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="badge badge-critical">
+              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+              CRITICAL
+            </span>
             <span className="text-sm font-semibold text-white/90">Impossible Travel Detected</span>
           </div>
-          <p className="text-sm text-white/60 mt-0.5">
+          <p className="text-sm text-white/60 truncate">
             <span className="font-medium text-red-400">James Smith</span> — Login from Moscow, RU
             14 min after New York, US session. 7,510 km impossible travel.
           </p>
         </div>
-        <div className="text-right">
+        <div className="text-right flex-shrink-0">
           <motion.span
             className="text-2xl font-bold text-red-400"
             initial={{ scale: 0 }}
@@ -37,11 +38,11 @@ export default function HighRiskBanner({ onInvestigate }) {
           >
             94
           </motion.span>
-          <div className="text-[10px] text-white/30 font-medium">RISK</div>
+          <div className="text-[10px] text-white/25 font-medium">RISK</div>
         </div>
         <button
           onClick={onInvestigate}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-500/15 text-red-400 text-sm font-medium hover:bg-red-500/25 transition-all"
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-500/15 text-red-400 text-sm font-medium hover:bg-red-500/25 transition-all flex-shrink-0"
         >
           Investigate
           <ArrowRight size={14} />

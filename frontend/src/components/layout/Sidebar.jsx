@@ -31,8 +31,7 @@ export default function Sidebar({ collapsed, setCollapsed, activePage, setActive
       initial={{ width: collapsed ? 72 : 256 }}
       animate={{ width: collapsed ? 72 : 256 }}
       transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-      className="h-screen flex flex-col py-4 px-3 glass fixed left-0 top-0 z-50 overflow-hidden"
-      style={{ borderRight: '1px solid rgba(255,255,255,0.06)' }}
+      className="h-screen flex flex-col py-4 px-3 sidebar fixed left-0 top-0 z-50 overflow-hidden"
     >
       <div className="flex items-center justify-between px-2 mb-6 mt-1">
         <AnimatePresence>
