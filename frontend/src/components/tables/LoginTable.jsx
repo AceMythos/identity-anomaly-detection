@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { Search, ChevronDown } from 'lucide-react'
 import GlassCard from '../glass/GlassCard'
 import SeverityBadge from '../common/SeverityBadge'
-import { recentLogins } from '../../data/mockData'
+import { recentLogins as mockLogins } from '../../data/mockData'
 
 const statusConfig = {
   blocked: { className: 'badge-critical', label: 'Blocked' },
@@ -11,16 +11,17 @@ const statusConfig = {
   allowed: { className: 'badge-low', label: 'Allowed' },
 }
 
-export default function LoginTable({ onRowClick }) {
+export default function LoginTable({ logins, onRowClick }) {
+  const items = logins && logins.length ? logins : mockLogins
   const [search, setSearch] = useState('')
   const [sortField, setSortField] = useState(null)
   const [sortDir, setSortDir] = useState('desc')
 
-  const filtered = recentLogins.filter(
+  const filtered = items.filter(
     (r) =>
-      r.user.toLowerCase().includes(search.toLowerCase()) ||
-      r.displayName.toLowerCase().includes(search.toLowerCase()) ||
-      r.ip.includes(search)
+      r.user?.toLowerCase().includes(search.toLowerCase()) ||
+      r.displayName?.toLowerCase().includes(search.toLowerCase()) ||
+      r.ip?.includes(search)
   )
 
   const sorted = [...filtered].sort((a, b) => {
@@ -84,8 +85,8 @@ export default function LoginTable({ onRowClick }) {
                 </td>
                 <td className="font-mono text-xs">{row.ip}</td>
                 <td className="text-xs">{row.country}</td>
-                <td className="text-xs text-white/50">{row.device}</td>
-                <td className="text-xs text-white/50">{row.os}</td>
+                <td className="text-xs text-white/50">{row.device || 'Unknown'}</td>
+                <td className="text-xs text-white/50">{row.os || 'Unknown'}</td>
                 <td>
                   <span className={`font-bold text-sm ${row.riskScore >= 70 ? 'text-red-400' : row.riskScore >= 40 ? 'text-amber-400' : 'text-green-400'}`}>
                     {row.riskScore}
@@ -107,7 +108,6 @@ export default function LoginTable({ onRowClick }) {
         <div className="flex gap-1">
           <button className="px-2.5 py-1 text-xs rounded-lg bg-white/5 text-white/45 hover:bg-white/10 transition-all">Previous</button>
           <button className="px-2.5 py-1 text-xs rounded-lg bg-blue-500/15 text-blue-400">1</button>
-          <button className="px-2.5 py-1 text-xs rounded-lg bg-white/5 text-white/45 hover:bg-white/10 transition-all">2</button>
           <button className="px-2.5 py-1 text-xs rounded-lg bg-white/5 text-white/45 hover:bg-white/10 transition-all">Next</button>
         </div>
       </div>

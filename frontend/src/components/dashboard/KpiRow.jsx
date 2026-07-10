@@ -3,49 +3,10 @@ import { Activity, AlertTriangle, Users, Shield } from 'lucide-react'
 import GlassCard from '../glass/GlassCard'
 import Sparkline from '../common/Sparkline'
 import useAnimatedCounter from '../../hooks/useAnimatedCounter'
-import { kpiData, sparklineData } from '../../data/mockData'
+import { sparklineData } from '../../data/mockData'
 
-const kpiConfig = [
-  {
-    icon: Activity,
-    label: 'Total Events',
-    data: kpiData.totalEvents,
-    color: '#3b82f6',
-    iconBg: 'bg-blue-500/10',
-    iconColor: 'text-blue-400',
-    format: true,
-  },
-  {
-    icon: AlertTriangle,
-    label: 'Anomalies',
-    data: kpiData.anomalies,
-    color: '#f59e0b',
-    iconBg: 'bg-amber-500/10',
-    iconColor: 'text-amber-400',
-    format: false,
-  },
-  {
-    icon: Shield,
-    label: 'High Risk Users',
-    data: kpiData.highRiskUsers,
-    color: '#ef4444',
-    iconBg: 'bg-red-500/10',
-    iconColor: 'text-red-400',
-    format: false,
-  },
-  {
-    icon: Users,
-    label: 'Users Monitored',
-    data: kpiData.usersMonitored,
-    color: '#22c55e',
-    iconBg: 'bg-green-500/10',
-    iconColor: 'text-green-400',
-    format: false,
-  },
-]
-
-function KPICardInner({ icon: Icon, label, data, color, iconBg, iconColor, format }) {
-  const animatedValue = useAnimatedCounter(data.value)
+function KPICardInner({ icon: Icon, label, value, change, delta, color, iconBg, iconColor }) {
+  const animatedValue = useAnimatedCounter(value)
 
   return (
     <GlassCard className="p-5">
@@ -57,25 +18,41 @@ function KPICardInner({ icon: Icon, label, data, color, iconBg, iconColor, forma
           <Sparkline data={sparklineData} color={color} height={36} />
         </div>
       </div>
-      <p className="text-2xl font-semibold text-white mb-0.5 tracking-tight">
-        {format ? animatedValue : animatedValue}
+      <p className="kpi-number text-white">
+        {animatedValue}
       </p>
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-white/50">{label}</p>
-        <span className={`text-xs font-medium ${
-          data.trend === 'up' ? 'text-red-400' : 'text-green-400'
-        }`}>
-          {data.trend === 'up' ? '↑' : '↓'} {Math.abs(data.change)}%
-        </span>
+      <div className="flex items-center justify-between mt-0.5">
+        <p className="kpi-label">{label}</p>
+      </div>
+      <div className="flex items-center gap-2 mt-0.5">
+        {delta !== undefined && (
+          <span className="text-[10px] font-medium text-white/30">
+            <span className={delta >= 0 ? 'text-red-400/60' : 'text-green-400/60'}>
+              {delta >= 0 ? '+' : ''}{delta}
+            </span> since last check
+          </span>
+        )}
+        {change !== undefined && (
+          <span className={`kpi-change ${change >= 0 ? 'text-red-400' : 'text-green-400'}`}>
+            {change >= 0 ? '↑' : '↓'} {Math.abs(change).toFixed(1)}%
+          </span>
+        )}
       </div>
     </GlassCard>
   )
 }
 
-export default function KpiRow() {
+export default function KpiRow({ totalEvents, anomalies, highRiskUsers, usersMonitored, eventsChange, anomalyChange }) {
+  const kpis = [
+    { icon: Activity,     label: 'Total Events',    value: totalEvents,  change: eventsChange,  delta: 23,   color: '#3b82f6', iconBg: 'bg-blue-500/10',    iconColor: 'text-blue-400' },
+    { icon: AlertTriangle,label: 'Anomalies',        value: anomalies,   change: anomalyChange, delta: -2,   color: '#f59e0b', iconBg: 'bg-amber-500/10',  iconColor: 'text-amber-400' },
+    { icon: Shield,       label: 'High Risk Users',  value: highRiskUsers,change: undefined,     delta: 1,    color: '#ef4444', iconBg: 'bg-red-500/10',     iconColor: 'text-red-400' },
+    { icon: Users,        label: 'Users Monitored',  value: usersMonitored,change: undefined,   delta: 0,    color: '#22c55e', iconBg: 'bg-green-500/10',   iconColor: 'text-green-400' },
+  ]
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-      {kpiConfig.map((kpi, i) => (
+      {kpis.map((kpi, i) => (
         <motion.div
           key={kpi.label}
           initial={{ opacity: 0, y: 20 }}

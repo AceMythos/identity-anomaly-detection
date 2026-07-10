@@ -85,7 +85,7 @@ export default function TopNavbar() {
       <div className="relative">
         <button className="p-2 rounded-xl hover:bg-white/5 text-white/40 hover:text-white/70 transition-all relative">
           <Bell size={18} />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-navy-950" />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500" style={{ boxShadow: '0 0 6px rgba(239,68,68,0.6)' }} />
         </button>
       </div>
 

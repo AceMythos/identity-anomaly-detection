@@ -104,9 +104,9 @@ export default function Sidebar({ collapsed, setCollapsed, activePage, setActive
         ))}
 
         {!collapsed && (
-          <div className="mt-4 px-3 py-3 rounded-xl bg-white/[0.03]">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-xs font-semibold text-white">
+          <div className="mt-4 px-3 py-3 rounded-xl bg-white/[0.03] space-y-2.5">
+            <div className="flex items-center gap-2 mb-2.5">
+              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-[10px] font-semibold text-white">
                 OP
               </div>
               <div>
@@ -114,9 +114,47 @@ export default function Sidebar({ collapsed, setCollapsed, activePage, setActive
                 <p className="text-xs text-white/40">Analyst</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/[0.06]">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: systemStatus.color }} />
-              <span className="text-xs text-white/50">{systemStatus.label}</span>
+            <div className="text-[10px] font-semibold text-white/40 uppercase tracking-wider">ML Models</div>
+            {[
+              { name: 'Isolation Forest', weight: '0.35', status: 'ok' },
+              { name: 'LOF', weight: '0.25', status: 'ok' },
+              { name: 'One-Class SVM', weight: '0.20', status: 'ok' },
+              { name: 'Elliptic Envelope', weight: '0.20', status: 'warning' },
+            ].map((m, i) => (
+              <motion.div
+                key={m.name}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 + i * 0.05 }}
+                className="flex items-center justify-between"
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-1.5 h-1.5 rounded-full ${m.status === 'ok' ? 'bg-green-500' : 'bg-amber-400'}`} />
+                  <span className="text-[11px] text-white/60 truncate">{m.name}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-white/30 font-mono">{m.weight}</span>
+                  <div className="w-1 h-1 rounded-full bg-white/10" />
+                </div>
+              </motion.div>
+            ))}
+            <div className="pt-2 mt-1 border-t border-white/[0.06] space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-white/40">Inference</span>
+                <span className="text-[10px] text-green-400 font-mono">8ms</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-white/40">Events/min</span>
+                <span className="text-[10px] text-white/60 font-mono">327</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-white/40">Accuracy</span>
+                <span className="text-[10px] text-green-400 font-mono">96.4%</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-white/40">Model</span>
+                <span className="text-[10px] text-white/60 font-mono">v1.4.2</span>
+              </div>
             </div>
           </div>
         )}

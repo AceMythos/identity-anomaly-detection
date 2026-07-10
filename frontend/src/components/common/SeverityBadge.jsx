@@ -1,11 +1,11 @@
 import { motion } from 'framer-motion'
 
 const severityConfig = {
-  critical: { className: 'badge-critical', label: 'Critical' },
-  high: { className: 'badge-high', label: 'High' },
-  medium: { className: 'badge-medium', label: 'Medium' },
-  low: { className: 'badge-low', label: 'Low' },
-  info: { className: 'badge-info', label: 'Info' },
+  critical: { className: 'severity-badge critical', label: 'Critical' },
+  high: { className: 'severity-badge high', label: 'High' },
+  medium: { className: 'severity-badge medium', label: 'Medium' },
+  low: { className: 'severity-badge low', label: 'Low' },
+  info: { className: 'severity-badge low', label: 'Info' },
 }
 
 export default function SeverityBadge({ severity = 'info', label, pulse = false }) {
@@ -15,10 +15,10 @@ export default function SeverityBadge({ severity = 'info', label, pulse = false 
     <motion.span
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
-      className={`badge ${config.className} ${pulse ? 'animate-pulse-glow' : ''}`}
+      className={`${config.className} badge-transition ${pulse ? 'badge-pulse' : ''}`}
     >
       {pulse && (
-        <span className={`w-1.5 h-1.5 rounded-full bg-current animate-pulse`} />
+        <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
       )}
       {label || config.label}
     </motion.span>

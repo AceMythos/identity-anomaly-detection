@@ -7,7 +7,7 @@ export default function HighRiskBanner({ onInvestigate }) {
       initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-      className="glass-elevated p-4 mb-4 glow-red"
+      className="glass-card-elevated p-4 mb-4 glow-red"
       style={{
         borderLeft: '3px solid #ef4444',
       }}
