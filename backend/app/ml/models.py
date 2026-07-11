@@ -58,9 +58,12 @@ class AnomalyDetector:
             nu=0.05, kernel="rbf", gamma="auto"
         ).fit(X_scaled)
 
-        self.models["elliptic_envelope"] = EllipticEnvelope(
-            contamination=0.05, random_state=42
-        ).fit(X_scaled)
+        try:
+            self.models["elliptic_envelope"] = EllipticEnvelope(
+                contamination=0.05, random_state=42, support_fraction=0.7
+            ).fit(X_scaled)
+        except ValueError:
+            self.models["elliptic_envelope"] = None
 
         self._fitted = True
         return self
@@ -83,21 +86,24 @@ class AnomalyDetector:
         if self.models["one_class_svm"]:
             scores[:, 2] = -self.models["one_class_svm"].decision_function(X_scaled)
 
-        if self.models["elliptic_envelope"]:
-            scores[:, 3] = -self.models["elliptic_envelope"].decision_function(X_scaled)
+        active = []
+        active_weights = []
+        for name, weight in self.weights.items():
+            if self.models.get(name) is not None:
+                active.append(name)
+                active_weights.append(weight)
 
-        for i in range(4):
+        for i, name in enumerate(active):
             col = scores[:, i]
             if col.max() > col.min():
                 scores[:, i] = (col - col.min()) / (col.max() - col.min())
 
-        weights_arr = np.array([
-            self.weights["isolation_forest"],
-            self.weights["lof"],
-            self.weights["one_class_svm"],
-            self.weights["elliptic_envelope"],
-        ])
-        final_scores = np.dot(scores, weights_arr)
+        if active_weights:
+            w = np.array(active_weights)
+            w = w / w.sum()
+            final_scores = np.dot(scores[:, :len(active)], w)
+        else:
+            final_scores = np.zeros(len(events_df))
 
         final_scores = np.clip(final_scores * 100, 0, 100)
         return final_scores.tolist()

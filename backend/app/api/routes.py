@@ -1,10 +1,12 @@
 import random
 import numpy as np
+import os
 from datetime import datetime, timedelta
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from ..data.personas import generator, PERSONAS, COUNTRIES, CITIES, ASN_MAP
+from ..data.lanl_loader import LOADER as LANL_LOADER, DATA_DIR as LANL_DIR
 from ..ml.models import DETECTOR
 
 router = APIRouter()
@@ -28,14 +30,23 @@ def get_status_from_age(ts_str):
     if age < 3600: return "acknowledged"
     return "dismissed"
 
-def ensure_data():
-    global events_cache, alerts_cache, last_generate_time
+def _use_lanl_data():
+    auth_file = os.path.join(LANL_DIR, "auth.txt.gz")
+    if not os.path.exists(auth_file):
+        return False
+    try:
+        events = list(LANL_LOADER.load_batch(size=500))
+        if len(events) < 10:
+            return False
+        events_cache.clear()
+        alerts_cache.clear()
+        _process_events(events)
+        return True
+    except Exception:
+        return False
 
-    now = datetime.now()
-    if last_generate_time and (now - last_generate_time).total_seconds() < 60 and events_cache:
-        return
-
-    raw = generator.generate_batch(400)
+def _process_events(raw):
+    global events_cache, alerts_cache
     df = __import__("pandas").DataFrame(raw)
 
     DETECTOR.fit(df)
@@ -61,9 +72,17 @@ def ensure_data():
     alerts = []
     for i in sorted(anomaly_indices):
         e = raw[i]
-        attack_type, mitre_id, mitre_name = random.choice(attack_type_pool)
+        existing = e.get("attack_type")
+        if existing:
+            mitre_id = e.get("mitre_id", "T1078")
+            mitre_name = e.get("mitre_name", "Valid Accounts")
+            attack_type = existing
+            attack_desc = e.get("attack_desc", f"Anomalous login detected (score: {e['risk_score']})")
+        else:
+            attack_type, mitre_id, mitre_name = random.choice(attack_type_pool)
+            attack_desc = f"Anomalous login detected (score: {e['risk_score']})"
+
         severity = risk_to_severity(e["risk_score"])
-        attack_desc = e.get("attack_desc", f"Anomalous login detected (score: {e['risk_score']})")
         alerts.append({
             "id": e["id"],
             "severity": severity,
@@ -79,8 +98,22 @@ def ensure_data():
         })
 
     alerts.sort(key=lambda a: (-a["riskScore"], a["timestamp"]))
-    events_cache = raw
-    alerts_cache = alerts
+    events_cache[:] = raw
+    alerts_cache[:] = alerts
+
+def ensure_data():
+    global events_cache, alerts_cache, last_generate_time
+
+    now = datetime.now()
+    if last_generate_time and (now - last_generate_time).total_seconds() < 60 and events_cache:
+        return
+
+    if _use_lanl_data():
+        last_generate_time = now
+        return
+
+    raw = generator.generate_batch(400)
+    _process_events(raw)
     last_generate_time = now
 
 @router.get("/health")
