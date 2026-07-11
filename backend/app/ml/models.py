@@ -24,23 +24,23 @@ class AnomalyDetector:
         self._fitted = False
 
     def _extract_features(self, events_df):
-        rows = []
-        for _, e in events_df.iterrows():
-            ts = pd.to_datetime(e["timestamp"])
-            hour = ts.hour
-            is_weekend = ts.weekday() >= 5
-
-            rows.append({
-                "hour": hour,
-                "is_weekend": int(is_weekend),
-                "is_success": int(e.get("is_success", True)),
-                "mfa_used": int(e.get("mfa_used", False)),
-                "mfa_failed": int(e.get("mfa_failed", False)),
-                "is_vpn": int(e.get("is_vpn", False)),
-                "is_tor": int(e.get("is_tor", False)),
-                "is_new_device": int(e.get("device", "") == "Unknown Browser" or e.get("browser", "") == "Spoofed"),
-            })
-        return pd.DataFrame(rows)
+        ts = pd.to_datetime(events_df["timestamp"], format="mixed")
+        cols = events_df.columns
+        return pd.DataFrame({
+            "hour": ts.dt.hour,
+            "is_weekend": (ts.dt.weekday >= 5).astype(int),
+            "is_success": events_df["is_success"].astype(int) if "is_success" in cols else 1,
+            "mfa_used": events_df["mfa_used"].astype(int) if "mfa_used" in cols else 0,
+            "mfa_failed": events_df["mfa_failed"].astype(int) if "mfa_failed" in cols else 0,
+            "is_vpn": events_df["is_vpn"].astype(int) if "is_vpn" in cols else 0,
+            "is_tor": events_df["is_tor"].astype(int) if "is_tor" in cols else 0,
+            "is_new_device": ((events_df["device"].eq("Unknown Browser") | events_df["browser"].eq("Spoofed")).astype(int)
+                              if "device" in cols and "browser" in cols else
+                              events_df["device"].eq("Unknown Browser").astype(int)
+                              if "device" in cols else
+                              events_df["browser"].eq("Spoofed").astype(int)
+                              if "browser" in cols else 0),
+        })
 
     def fit(self, events_df):
         X = self._extract_features(events_df)

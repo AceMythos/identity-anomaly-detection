@@ -1,6 +1,7 @@
 import random
 import numpy as np
 from datetime import datetime, timedelta
+from .geolocation import get_city_coords, get_country_coords
 
 PERSONAS = {
     "alice.c":   {"name": "Alice Chen",      "dept": "Engineering",   "country": "US",  "tz_offset": -5, "device": "Windows 11", "browser": "Chrome 125",  "work_start": 8,  "work_end": 17, "login_rate": 5, "mfa": True},
@@ -110,6 +111,10 @@ class AuthLogGenerator:
         st["last_country"] = persona["country"]
         st["last_city"] = self._random_city(persona["country"])
 
+        coords = get_city_coords(st["last_city"])
+        if coords == [0, 0]:
+            coords = get_country_coords(persona["country"])
+
         return {
             "user": uid,
             "display_name": persona["name"],
@@ -117,6 +122,7 @@ class AuthLogGenerator:
             "ip": self._random_ip(persona["country"]),
             "country": persona["country"],
             "city": st["last_city"],
+            "coords": coords,
             "device": persona["device"],
             "browser": persona["browser"],
             "os": persona["device"],
@@ -138,10 +144,18 @@ class AuthLogGenerator:
         attack_city = self._random_city(attack_country)
 
         if attack_type == "impossible_travel":
+            attack_coords = get_city_coords(attack_city)
+            if attack_coords == [0, 0]:
+                attack_coords = get_country_coords(attack_country)
+            prev_coords = get_city_coords(st["last_city"])
+            if prev_coords == [0, 0]:
+                prev_coords = get_country_coords(persona["country"])
+
             return {
                 "user": uid, "display_name": persona["name"],
                 "timestamp": base_time.isoformat(),
                 "ip": self._random_ip(attack_country), "country": attack_country, "city": attack_city,
+                "coords": attack_coords,
                 "device": "Unknown Browser", "browser": "Spoofed", "os": "Windows 11 (unmanaged)",
                 "is_success": True, "is_anomaly": True, "risk_score": round(self.rng.uniform(85, 98), 1),
                 "mfa_used": False, "mfa_failed": False, "is_vpn": False, "is_tor": False,
@@ -150,6 +164,7 @@ class AuthLogGenerator:
                 "attack_desc": f"Login from {attack_country} after {persona['country']}",
                 "mitre_id": "T1078", "mitre_name": "Valid Accounts",
                 "previous_country": persona["country"], "previous_city": st["last_city"],
+                "previous_coords": prev_coords,
                 "travel_distance_km": self.rng.randint(3000, 12000),
                 "travel_time_min": self.rng.randint(5, 180),
             }
@@ -160,6 +175,7 @@ class AuthLogGenerator:
                 "timestamp": base_time.isoformat(),
                 "ip": f"185.220.{self.rng.randint(100, 105)}.{self.rng.randint(1, 255)}",
                 "country": "DE", "city": "Frankfurt",
+                "coords": [8.6821, 50.1109],
                 "device": "Unknown Browser", "browser": "Spoofed", "os": "Linux (TOR)",
                 "is_success": True, "is_anomaly": True, "risk_score": round(self.rng.uniform(82, 95), 1),
                 "mfa_used": False, "mfa_failed": False, "is_vpn": False, "is_tor": True,
@@ -173,10 +189,14 @@ class AuthLogGenerator:
         elif attack_type == "password_spray":
             targets = self.rng.sample(list(PERSONAS.keys()), min(5, len(PERSONAS)))
             failed = self.rng.randint(5, 15)
+            spray_coords = get_city_coords(attack_city)
+            if spray_coords == [0, 0]:
+                spray_coords = get_country_coords(attack_country)
             return {
                 "user": uid, "display_name": persona["name"],
                 "timestamp": base_time.isoformat(),
                 "ip": self._random_ip(attack_country), "country": attack_country, "city": attack_city,
+                "coords": spray_coords,
                 "device": self._random_device(), "browser": self._random_browser(), "os": self._random_device(),
                 "is_success": True, "is_anomaly": True, "risk_score": round(self.rng.uniform(70, 88), 1),
                 "mfa_used": False, "mfa_failed": False, "is_vpn": False, "is_tor": False,
@@ -189,11 +209,16 @@ class AuthLogGenerator:
             }
 
         elif attack_type == "service_abuse":
+            abuse_city = self._random_city(persona["country"])
+            abuse_coords = get_city_coords(abuse_city)
+            if abuse_coords == [0, 0]:
+                abuse_coords = get_country_coords(persona["country"])
             return {
                 "user": uid, "display_name": persona["name"],
                 "timestamp": base_time.isoformat(),
                 "ip": self._random_ip(persona["country"]),
-                "country": persona["country"], "city": self._random_city(persona["country"]),
+                "country": persona["country"], "city": abuse_city,
+                "coords": abuse_coords,
                 "device": persona["device"], "browser": persona["browser"], "os": persona["device"],
                 "is_success": True, "is_anomaly": True, "risk_score": round(self.rng.uniform(70, 85), 1),
                 "mfa_used": False, "mfa_failed": False, "is_vpn": False, "is_tor": False,
@@ -223,8 +248,11 @@ class AuthLogGenerator:
             hour = ts.hour
             is_biz = self._is_business_hours(hour, persona)
 
-            if self.rng.random() < 0.03 and is_biz:
-                attack_type = self.rng.choice(["impossible_travel", "tor", "password_spray", "service_abuse"])
+            if self.rng.random() < 0.06 and is_biz:
+                attack_type = self.rng.choices(
+                    ["impossible_travel", "tor", "password_spray", "service_abuse"],
+                    weights=[3, 1, 1, 1],
+                )[0]
                 event = self.generate_attack_event(attack_type, uid, persona, ts)
                 events.append(event)
             elif not is_biz and self.rng.random() < 0.08:

@@ -1,19 +1,20 @@
 import random
-import numpy as np
 import os
+import joblib
 from datetime import datetime, timedelta
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
-from ..data.personas import generator, PERSONAS, COUNTRIES, CITIES, ASN_MAP
-from ..data.lanl_loader import LOADER as LANL_LOADER, DATA_DIR as LANL_DIR
+from ..data.personas import PERSONAS
+from ..data import cache
 from ..ml.models import DETECTOR
 
 router = APIRouter()
 
-events_cache = []
-alerts_cache = []
 last_generate_time = None
+_initialized = False
+MODEL_PATH = os.path.join(cache.CACHE_DIR, "detector.joblib")
+MAX_EVENTS = 5000000
 
 SEVERITY_ORDER = ["critical", "high", "medium", "low"]
 
@@ -30,34 +31,55 @@ def get_status_from_age(ts_str):
     if age < 3600: return "acknowledged"
     return "dismissed"
 
-def _use_lanl_data():
-    auth_file = os.path.join(LANL_DIR, "auth.txt.gz")
-    if not os.path.exists(auth_file):
-        return False
-    try:
-        events = list(LANL_LOADER.load_batch(size=500))
-        if len(events) < 10:
-            return False
-        events_cache.clear()
-        alerts_cache.clear()
-        _process_events(events)
-        return True
-    except Exception:
-        return False
+def _init_ml():
+    global _initialized
+    if _initialized:
+        return
+    if os.path.exists(MODEL_PATH):
+        try:
+            loaded = joblib.load(MODEL_PATH)
+            DETECTOR.__dict__.update(loaded.__dict__)
+            _initialized = True
+            print(f"[routes] Loaded ML model from {MODEL_PATH}")
+            return
+        except Exception as e:
+            print(f"[routes] Model load failed: {e}")
 
-def _process_events(raw):
-    global events_cache, alerts_cache
-    df = __import__("pandas").DataFrame(raw)
+    print("[routes] Fitting ML model on sample...")
+    sample = cache.get_sample(50000)
+    if sample:
+        df = __import__("pandas").DataFrame(sample)
+        DETECTOR.fit(df)
+        joblib.dump(DETECTOR, MODEL_PATH)
+        print(f"[routes] ML model saved to {MODEL_PATH}")
+    _initialized = True
 
-    DETECTOR.fit(df)
-    risk_scores = DETECTOR.predict(df)
+def ensure_data():
+    global last_generate_time, _initialized
 
-    anomaly_indices = set()
-    for i, score in enumerate(risk_scores):
-        raw[i]["risk_score"] = round(score, 1)
-        raw[i]["is_anomaly"] = score >= 30
-        if score >= 30:
-            anomaly_indices.add(i)
+    now = datetime.now()
+    if last_generate_time and (now - last_generate_time).total_seconds() < 60 and cache.cache_exists():
+        return
+
+    if cache.cache_exists():
+        _init_ml()
+        last_generate_time = now
+        return
+
+    print(f"[routes] Building cache ({MAX_EVENTS} events)...")
+    count = cache.build_cache(max_events=MAX_EVENTS)
+    _initialized = False
+    _init_ml()
+    last_generate_time = now
+    print(f"[routes] Ready: {count} events")
+
+def _build_alerts_from_db(limit=20):
+    rows = cache.query("""
+        SELECT * FROM events
+        WHERE is_anomaly = true
+        ORDER BY risk_score DESC, timestamp DESC
+        LIMIT ?
+    """, [limit * 3])
 
     attack_type_pool = [
         ("Impossible Travel", "T1078", "Valid Accounts"),
@@ -70,8 +92,7 @@ def _process_events(raw):
     ]
 
     alerts = []
-    for i in sorted(anomaly_indices):
-        e = raw[i]
+    for e in rows:
         existing = e.get("attack_type")
         if existing:
             mitre_id = e.get("mitre_id", "T1078")
@@ -98,100 +119,122 @@ def _process_events(raw):
         })
 
     alerts.sort(key=lambda a: (-a["riskScore"], a["timestamp"]))
-    events_cache[:] = raw
-    alerts_cache[:] = alerts
-
-def ensure_data():
-    global events_cache, alerts_cache, last_generate_time
-
-    now = datetime.now()
-    if last_generate_time and (now - last_generate_time).total_seconds() < 60 and events_cache:
-        return
-
-    if _use_lanl_data():
-        last_generate_time = now
-        return
-
-    raw = generator.generate_batch(400)
-    _process_events(raw)
-    last_generate_time = now
+    return alerts[:limit]
 
 @router.get("/health")
 def health():
-    return {"status": "ok", "version": "1.0.0", "events": len(events_cache), "alerts": len(alerts_cache)}
+    ensure_data()
+    total = 0
+    anomalies = 0
+    if cache.cache_exists():
+        r = cache.query("SELECT COUNT(*) as c FROM events")
+        total = r[0]["c"] if r else 0
+        r = cache.query("SELECT COUNT(*) as c FROM events WHERE is_anomaly")
+        anomalies = r[0]["c"] if r else 0
+    return {"status": "ok", "version": "1.0.0", "events": total, "alerts": anomalies}
 
 @router.get("/generate")
 def generate():
     ensure_data()
-    return {"generated": len(events_cache), "anomalies": len(alerts_cache)}
+    total = 0
+    anomalies = 0
+    if cache.cache_exists():
+        r = cache.query("SELECT COUNT(*) as c FROM events")
+        total = r[0]["c"] if r else 0
+        r = cache.query("SELECT COUNT(*) as c FROM events WHERE is_anomaly")
+        anomalies = r[0]["c"] if r else 0
+    return {"generated": total, "anomalies": anomalies}
+
+_cached_explanations = None
 
 @router.get("/dashboard")
 def get_dashboard():
+    global _cached_explanations
     ensure_data()
 
-    df = __import__("pandas").DataFrame(events_cache)
-    anomaly_df = df[df["is_anomaly"]]
+    if not cache.cache_exists():
+        return {"kpis": {}, "anomalyTrend": [], "riskDistribution": [],
+                "userActivity": [], "topReasons": [], "recentLogins": [],
+                "alerts": [], "scatterData": []}
 
-    total = len(df)
-    anomalies = len(anomaly_df)
-    high_risk = len(anomaly_df[anomaly_df["risk_score"] >= 70])
-    users = df["user"].nunique()
+    con = cache.get_connection()
+
+    total = con.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    anomalies = con.execute("SELECT COUNT(*) FROM events WHERE is_anomaly").fetchone()[0]
+    high_risk = con.execute("SELECT COUNT(*) FROM events WHERE risk_score >= 70").fetchone()[0]
+    users = con.execute("SELECT COUNT(DISTINCT user) FROM events").fetchone()[0]
+
+    rows = con.execute("SELECT * FROM dashboard_summary").fetchall()
+    cols = [desc[0] for desc in con.description]
+    summary = [dict(zip(cols, r)) for r in rows]
 
     days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     anomaly_trend = []
-    for d in days:
-        day_mask = df["timestamp"].apply(lambda t: datetime.fromisoformat(t).strftime("%a")) == d
-        day_events = df[day_mask]
-        day_anomalies = anomaly_df[anomaly_df["timestamp"].apply(lambda t: datetime.fromisoformat(t).strftime("%a")) == d]
+    for i in range(7):
+        anom = sum(r["cnt"] for r in summary if r["day_of_week"] == i and r["is_anomaly"])
+        tot = sum(r["cnt"] for r in summary if r["day_of_week"] == i)
         anomaly_trend.append({
-            "date": d,
-            "anomalies": len(day_anomalies),
-            "falsePositives": max(0, len(day_anomalies) - max(1, len(day_events) // 10)),
+            "date": days[i],
+            "anomalies": anom,
+            "falsePositives": max(0, anom - max(1, tot // 10)),
         })
 
-    risk_dist = [
-        {"name": "Critical", "value": len(anomaly_df[anomaly_df["risk_score"] >= 85]), "color": "#dc2626"},
-        {"name": "High", "value": len(anomaly_df[(anomaly_df["risk_score"] >= 70) & (anomaly_df["risk_score"] < 85)]), "color": "#ef4444"},
-        {"name": "Medium", "value": len(anomaly_df[(anomaly_df["risk_score"] >= 40) & (anomaly_df["risk_score"] < 70)]), "color": "#f59e0b"},
-        {"name": "Low", "value": len(anomaly_df[(anomaly_df["risk_score"] >= 30) & (anomaly_df["risk_score"] < 40)]), "color": "#22c55e"},
+    risk_levels = [
+        ("Critical", "critical", "#dc2626"),
+        ("High", "high", "#ef4444"),
+        ("Medium", "medium", "#f59e0b"),
+        ("Low", "low", "#22c55e"),
     ]
+    risk_dist = []
+    for name, sev, color in risk_levels:
+        c = sum(r["cnt"] for r in summary if r["severity"] == sev and r["is_anomaly"])
+        risk_dist.append({"name": name, "value": c, "color": color})
 
     user_activity = []
     for h in range(24):
-        hour_str = f"{h:02d}"
-        hour_mask = df["timestamp"].apply(lambda t: datetime.fromisoformat(t).hour == h)
-        hour_events = df[hour_mask]
-        hour_anomalies = anomaly_df[anomaly_df["timestamp"].apply(lambda t: datetime.fromisoformat(t).hour == h)]
+        normal = sum(r["cnt"] for r in summary if r["hour"] == h and not r["is_anomaly"])
+        anom = sum(r["cnt"] for r in summary if r["hour"] == h and r["is_anomaly"])
         user_activity.append({
-            "hour": hour_str,
-            "normal": len(hour_events) - len(hour_anomalies),
-            "anomalous": len(hour_anomalies),
+            "hour": f"{h:02d}",
+            "normal": normal,
+            "anomalous": anom,
         })
 
-    explanations = DETECTOR.explain(df)
     reason_map = {
         "Hour": "Off-Hours Access", "Weekend": "Weekend Login", "Failed Auth": "Multiple Failed Logins",
         "MFA Skipped": "MFA Not Used", "MFA Failed": "MFA Failure", "VPN": "VPN Detected",
         "TOR": "TOR Detected", "New Device": "New Device Login",
     }
-    top_reasons_raw = sorted(explanations.items(), key=lambda x: -x[1])[:7]
     top_reasons = []
-    for feat, val in top_reasons_raw:
-        if val > 1:
-            top_reasons.append({
-                "reason": reason_map.get(feat, feat),
-                "count": max(1, int(val * 5)),
-                "percentage": max(1, min(100, int(val))),
-            })
+    if DETECTOR._fitted:
+        if _cached_explanations is None:
+            sample = cache.get_sample(5000)
+            if sample:
+                sample_df = __import__("pandas").DataFrame(sample)
+                _cached_explanations = DETECTOR.explain(sample_df)
+        if _cached_explanations:
+            for feat, val in sorted(_cached_explanations.items(), key=lambda x: -x[1])[:7]:
+                if val > 1:
+                    top_reasons.append({
+                        "reason": reason_map.get(feat, feat),
+                        "count": max(1, int(val * 5)),
+                        "percentage": max(1, min(100, int(val))),
+                    })
 
     while len(top_reasons) < 5:
         top_reasons.append({"reason": "Unknown", "count": 1, "percentage": 1})
 
-    recent = df.sort_values("timestamp", ascending=False).head(20)
+    recent_rows = con.execute("""
+        SELECT * FROM events ORDER BY timestamp DESC LIMIT 20
+    """).fetchall()
+    recent_cols = [desc[0] for desc in con.description]
     recent_logins = []
-    for _, e in recent.iterrows():
+    for row in recent_rows:
+        e = dict(zip(recent_cols, row))
         risk = e["risk_score"]
         status = "blocked" if risk >= 85 else ("flagged" if risk >= 40 else "allowed")
+        ts = e["timestamp"]
+        ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
         recent_logins.append({
             "id": e["id"],
             "user": e["user"],
@@ -202,11 +245,15 @@ def get_dashboard():
             "os": e.get("os", "Unknown"),
             "status": status,
             "riskScore": risk,
-            "time": datetime.fromisoformat(e["timestamp"]).strftime("%H:%M:%S"),
+            "time": datetime.fromisoformat(ts_str).strftime("%H:%M:%S"),
         })
 
+    scatter_rows = con.execute("""
+        SELECT user, risk_score, is_anomaly FROM events USING SAMPLE 80
+    """).fetchall()
     scatter_data = []
-    for _, e in df.sample(min(80, len(df))).iterrows():
+    for row in scatter_rows:
+        e = dict(zip(["user", "risk_score", "is_anomaly"], row))
         scatter_data.append({
             "user": e["user"],
             "riskScore": e["risk_score"],
@@ -214,7 +261,10 @@ def get_dashboard():
             "isAnomaly": bool(e["is_anomaly"]),
         })
 
+    con.close()
+
     high_risk_change = round((high_risk / max(1, users)) * 100, 1)
+    alerts = _build_alerts_from_db(15)
 
     return {
         "kpis": {
@@ -231,46 +281,46 @@ def get_dashboard():
         "userActivity": user_activity,
         "topReasons": top_reasons,
         "recentLogins": recent_logins,
-        "alerts": alerts_cache[:15],
+        "alerts": alerts,
         "scatterData": scatter_data,
     }
 
 @router.get("/alerts")
 def get_alerts():
     ensure_data()
-    return alerts_cache[:20]
+    return _build_alerts_from_db(20)
 
 @router.get("/alerts/{alert_id}")
 def get_alert_detail(alert_id: int):
     ensure_data()
-    for a in alerts_cache:
-        if a["id"] == alert_id:
-            return _build_investigation(a)
-    return {"error": "not found"}, 404
+    return _build_investigation(alert_id)
 
 @router.post("/alerts/{alert_id}/ack")
 def acknowledge_alert(alert_id: int):
-    for a in alerts_cache:
-        if a["id"] == alert_id:
-            a["status"] = "acknowledged"
-            return {"status": "ok", "alert_id": alert_id}
-    return {"error": "not found"}, 404
+    return {"status": "ok", "alert_id": alert_id}
 
-def _build_investigation(alert=None):
+def _build_investigation(alert_id=None):
     ensure_data()
-    if alert is None and alerts_cache:
-        alert = alerts_cache[0]
 
-    if not alert:
-        return {"error": "no alerts"}, 404
+    if alert_id:
+        rows = cache.query("SELECT * FROM events WHERE id = ?", [alert_id])
+    else:
+        rows = cache.query("SELECT * FROM events WHERE is_anomaly ORDER BY risk_score DESC LIMIT 1")
 
-    e = None
-    for ev in events_cache:
-        if ev["id"] == alert["id"]:
-            e = ev
-            break
-    if e is None and events_cache:
-        e = events_cache[0]
+    if not rows:
+        return {"error": "not found"}
+
+    e = cache.row_to_event(rows[0])
+
+    alert = {
+        "id": e["id"],
+        "risk_score": e["risk_score"],
+        "severity": risk_to_severity(e["risk_score"]),
+        "user": e["user"],
+        "display_name": e["display_name"],
+        "mitre_id": e.get("mitre_id", "T1078"),
+        "mitre_name": e.get("mitre_name", "Valid Accounts"),
+    }
 
     country = e.get("country", "Unknown")
     prev_country = e.get("previous_country", "US")
@@ -278,7 +328,7 @@ def _build_investigation(alert=None):
     travel_dist = e.get("travel_distance_km", random.randint(3000, 12000))
     travel_time = e.get("travel_time_min", random.randint(5, 180))
 
-    explanations = DETECTOR.explain(__import__("pandas").DataFrame([e])) if e else {}
+    explanations = DETECTOR.explain(__import__("pandas").DataFrame([e])) if DETECTOR._fitted else {}
 
     contrib_colors = {
         "Hour": "#f59e0b", "Weekend": "#f59e0b", "Failed Auth": "#f59e0b",
@@ -356,10 +406,78 @@ def _build_investigation(alert=None):
 @router.get("/investigation/{alert_id}")
 def get_investigation(alert_id: int):
     ensure_data()
-    for a in alerts_cache:
-        if a["id"] == alert_id:
-            return _build_investigation(a)
-    return {"error": "not found"}, 404
+    return _build_investigation(alert_id)
+
+@router.get("/map")
+def get_map_data():
+    ensure_data()
+
+    con = cache.get_connection()
+    loc_rows = con.execute("""
+        SELECT city, country, lng, lat, risk_score, event_count, anomaly_count
+        FROM location_summary
+        ORDER BY event_count DESC
+        LIMIT 500
+    """).fetchall()
+    loc_cols = [desc[0] for desc in con.description]
+
+    loc_list = []
+    for row in loc_rows:
+        e = dict(zip(loc_cols, row))
+        risk = e["risk_score"]
+        sev = "critical" if risk >= 85 else ("high" if risk >= 70 else ("medium" if risk >= 40 else "normal"))
+        loc_list.append({
+            "name": e["city"],
+            "country": e["country"],
+            "coords": [e["lng"], e["lat"]],
+            "risk": risk,
+            "user": "",
+            "severity": sev,
+            "totalEvents": e["event_count"],
+            "anomalies": e["anomaly_count"],
+        })
+
+    travel_rows = con.execute("""
+        SELECT * FROM events
+        WHERE is_anomaly AND attack_type IN ('Impossible Travel', 'Attack IP', 'Account Takeover')
+        LIMIT 200
+    """).fetchall()
+    travel_cols = [desc[0] for desc in con.description]
+
+    travel_paths = []
+    for row in travel_rows:
+        e = dict(zip(travel_cols, row))
+        prev_coords = [e.get("prev_lng", 0), e.get("prev_lat", 0)]
+        if prev_coords == [0, 0]:
+            from ..data.geolocation import get_country_coords
+            prev_coords = get_country_coords(e.get("previous_country", "US"))
+
+        from_loc = {
+            "name": e.get("previous_city", ""),
+            "country": e.get("previous_country", "US"),
+            "coords": prev_coords,
+        }
+        to_loc = {
+            "name": e.get("city", ""),
+            "country": e.get("country", "US"),
+            "coords": [e.get("lng", 0), e.get("lat", 0)],
+        }
+
+        attack_type = e.get("attack_type", "Suspicious Login")
+        dist = e.get("travel_distance_km", 0)
+        travel_paths.append({
+            "from": from_loc,
+            "to": to_loc,
+            "risk": e.get("risk_score", 0),
+            "user": e.get("display_name", e["user"]),
+            "type": attack_type,
+            "distance": f"{dist:,} km" if dist else "N/A",
+            "timeGap": f"{e.get('travel_time_min', 0)} min" if e.get('travel_time_min') else "N/A",
+        })
+
+    con.close()
+    return {"locations": loc_list, "travelPaths": travel_paths}
+
 
 connected_websockets = set()
 

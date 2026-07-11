@@ -29,6 +29,10 @@ export async function getInvestigation(id) {
   return fetchJson(`/investigation/${id}`)
 }
 
+export async function getMapData() {
+  return fetchJson('/map')
+}
+
 export async function healthCheck() {
   return fetchJson('/health')
 }
