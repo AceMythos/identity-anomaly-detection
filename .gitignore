@@ -24,3 +24,4 @@ venv/
 backend/app/data/rba/*.duckdb
 backend/app/data/rba/*.joblib
 backend/app/data/rba/*.zip
+.foglamp/
